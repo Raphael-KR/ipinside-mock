@@ -1,0 +1,28 @@
+# Build artifacts
+*.app/
+/IPinsideMock.app
+*.o
+*.d
+
+# SSL certificates and keys (personal data)
+*.crt
+*.key
+*.pem
+
+# Captured response data (personal data)
+captured.json
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+build/
+DerivedData/
+
+# Generated icon (reproducible via generate_icon.swift)
+AppIcon.icns
