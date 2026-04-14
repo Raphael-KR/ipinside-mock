@@ -208,10 +208,26 @@ class IPinsideMockServer {
         let escaped_certPath = certPath.replacingOccurrences(of: "'", with: "\\'")
         let escaped_keyPath = keyPath.replacingOccurrences(of: "'", with: "\\'")
 
+        let ppid = ProcessInfo.processInfo.processIdentifier
         return """
-        import ssl, os
+        import ssl, os, threading, signal, sys
         from http.server import HTTPServer, BaseHTTPRequestHandler
         from urllib.parse import urlparse, parse_qs
+
+        PARENT_PID = \(ppid)
+
+        def watch_parent():
+            \"\"\"Exit if parent process dies (prevents orphan server).\"\"\"
+            import time
+            while True:
+                time.sleep(2)
+                try:
+                    os.kill(PARENT_PID, 0)
+                except OSError:
+                    os._exit(0)
+
+        t = threading.Thread(target=watch_parent, daemon=True)
+        t.start()
 
         with open('\(escaped_dataPath)', 'r') as f:
             RESPONSE = f.read().strip()
@@ -550,6 +566,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         server.stop()
         NSApp.terminate(nil)
     }
+
+    func cleanupAndExit() {
+        server.stop()
+        exit(0)
+    }
 }
 
 // MARK: - Main
@@ -558,4 +579,11 @@ let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let delegate = AppDelegate()
 app.delegate = delegate
+
+// Ensure Python server is killed on any termination (SIGTERM, SIGINT, SIGHUP)
+let cleanup = { signal(SIGTERM, SIG_DFL); signal(SIGINT, SIG_DFL); delegate.cleanupAndExit() }
+signal(SIGTERM) { _ in cleanup() }
+signal(SIGINT)  { _ in cleanup() }
+signal(SIGHUP)  { _ in cleanup() }
+
 app.run()
