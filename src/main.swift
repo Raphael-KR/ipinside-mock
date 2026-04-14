@@ -43,7 +43,8 @@ class SetupManager {
     var isSetupComplete: Bool {
         FileManager.default.fileExists(atPath: certPath) &&
         FileManager.default.fileExists(atPath: keyPath) &&
-        FileManager.default.fileExists(atPath: dataPath)
+        FileManager.default.fileExists(atPath: dataPath) &&
+        isCertTrusted
     }
 
     /// Check if IPinside is currently installed
@@ -132,6 +133,44 @@ class SetupManager {
             return true
         } catch {
             NSLog("Failed to save captured data: \(error)")
+            return false
+        }
+    }
+
+    /// Add the server cert to the login keychain as trusted
+    /// so browsers accept the mock server's HTTPS connection
+    func trustCert() -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = [
+            "add-trusted-cert", "-r", "trustAsRoot",
+            "-k", NSHomeDirectory() + "/Library/Keychains/login.keychain-db",
+            certPath
+        ]
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            NSLog("Failed to trust cert: \(error)")
+            return false
+        }
+    }
+
+    /// Check if the cert is already trusted in the login keychain
+    var isCertTrusted: Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-certificate", "-c", "127.0.0.1",
+                             NSHomeDirectory() + "/Library/Keychains/login.keychain-db"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
             return false
         }
     }
@@ -351,8 +390,9 @@ class SetupWindowController: NSObject {
 
         let hasCerts = FileManager.default.fileExists(atPath: certPath) &&
                        FileManager.default.fileExists(atPath: keyPath)
+        let hasData = FileManager.default.fileExists(atPath: dataPath)
 
-        if !setup.isIPinsideInstalled {
+        if !setup.isIPinsideInstalled && !hasCerts {
             currentStep = 0
             stepLabel.stringValue = "① IPinside를 설치하세요.\n은행 사이트(예: IBK)의 보안프로그램 설치 페이지에서 다운로드할 수 있습니다."
             statusLabel.stringValue = "설치 후 아래 버튼을 눌러주세요."
@@ -362,11 +402,17 @@ class SetupWindowController: NSObject {
             stepLabel.stringValue = "② SSL 인증서를 복사합니다.\n관리자 비밀번호 입력이 필요합니다 (1회만)."
             statusLabel.stringValue = "IPinside가 설치된 것을 확인했습니다."
             actionButton.title = "인증서 복사"
-        } else {
+        } else if !hasData {
             currentStep = 2
             stepLabel.stringValue = "③ IPinside 응답 데이터를 캡처합니다.\nIPinside 데몬이 실행 중이어야 합니다."
             statusLabel.stringValue = ""
             actionButton.title = "캡처 시작"
+        } else {
+            // hasCerts && hasData but cert not trusted in keychain
+            currentStep = 3
+            stepLabel.stringValue = "④ SSL 인증서를 브라우저가 신뢰하도록 등록합니다."
+            statusLabel.stringValue = "키체인 접근 허용 팝업이 뜰 수 있습니다."
+            actionButton.title = "인증서 등록"
         }
     }
 
@@ -392,6 +438,8 @@ class SetupWindowController: NSObject {
                 success = self.setup.copyCerts()
             case 2:
                 success = self.setup.captureResponse()
+            case 3:
+                success = self.setup.trustCert()
             default:
                 break
             }
@@ -421,6 +469,8 @@ class SetupWindowController: NSObject {
             statusLabel.stringValue = "⚠️ 인증서 복사에 실패했습니다."
         case 2:
             statusLabel.stringValue = "⚠️ 캡처 실패. IPinside 데몬이 실행 중인지 확인하세요."
+        case 3:
+            statusLabel.stringValue = "⚠️ 인증서 등록 실패. 키체인 접근을 허용해주세요."
         default:
             break
         }
