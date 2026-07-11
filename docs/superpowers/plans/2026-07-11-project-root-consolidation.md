@@ -14,7 +14,8 @@
 - Installed application remains at `/Applications/IPinsideMock.app`.
 - Runtime data remains at `/Users/raphael/Library/Application Support/IPinsideMock`.
 - Never add `captured.json`, `*.crt`, `*.key`, `*.pem`, `*.app`, or `AppIcon.icns` to Git.
-- Do not delete the legacy backup until every verification step passes.
+- Do not delete the legacy backup until all automated gates pass and any
+  approved manual-check verification waiver is recorded.
 - Do not change the app bundle identifier, response protocol, capture format, or setup behavior.
 
 ---
@@ -362,6 +363,19 @@ https://kiup.ibk.co.kr/uib/jsp/index.jsp
 
 Expected: no `Agent가 설치되어 있지 않다` warning appears and the page advances beyond `처리중입니다. 잠시만 기다려 주세요`.
 
+#### 검증 유예 (Verification waiver)
+
+The authenticated IBK agent-check flow was not re-run during consolidation
+because it requires account authentication and could alter account state. The
+user explicitly approved treating this check as a post-consolidation manual
+acceptance check.
+
+Backup deletion was approved based on successful local loopback HTTPS/JSONP
+response validation, successful process-cleanup validation, unchanged
+`src/main.swift`, unchanged runtime-data checksums, and the user's prior
+successful IBK use. This waiver applies only to this consolidation run and does
+not claim that the authenticated IBK flow passed.
+
 - [ ] **Step 5: Quit the menu bar app and verify child cleanup**
 
 Choose `종료` from the app's menu, wait three seconds, then run:
@@ -431,7 +445,8 @@ Before deletion, confirm the runtime copies of `captured.json`, `interezen.crt`,
 
 - [ ] **Step 3: Delete the verified rollback copy**
 
-Run only after Tasks 1-4 and Steps 1-2 of this task pass:
+Run only after the automated gates in Tasks 1-4 and Steps 1-2 of this task pass,
+with the approved authenticated-IBK manual-check waiver recorded:
 
 ```bash
 rm -rf /Users/raphael/ipinside-mock.legacy-backup-20260711
