@@ -3,6 +3,8 @@
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SOURCE_FILE="$SCRIPT_DIR/src/main.swift"
+ICON_FILE="$SCRIPT_DIR/AppIcon.icns"
 APP_NAME="IPinsideMock"
 APP_DIR="$SCRIPT_DIR/$APP_NAME.app"
 CONTENTS="$APP_DIR/Contents"
@@ -10,19 +12,24 @@ MACOS="$CONTENTS/MacOS"
 
 echo "빌드 중..."
 
+if [[ ! -f "$ICON_FILE" ]]; then
+    echo "아이콘 생성 중..."
+    swift "$SCRIPT_DIR/generate_icon.swift"
+fi
+
 # 1. Swift 컴파일
 swiftc -O \
     -o "/tmp/$APP_NAME" \
     -framework Cocoa \
     -framework Network \
-    "$SCRIPT_DIR/IPinsideMock/main.swift"
+    "$SOURCE_FILE"
 
 # 2. .app 번들 구조 생성
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS"
 mkdir -p "$CONTENTS/Resources"
 cp "/tmp/$APP_NAME" "$MACOS/"
-cp "$SCRIPT_DIR/AppIcon.icns" "$CONTENTS/Resources/"
+cp "$ICON_FILE" "$CONTENTS/Resources/"
 
 # 3. Info.plist
 cat > "$CONTENTS/Info.plist" << 'PLIST'
