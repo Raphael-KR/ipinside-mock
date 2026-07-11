@@ -152,11 +152,18 @@ for (name, size) in sizes {
 
 print("Iconset generated at: \(iconsetPath)")
 
-// Convert to .icns
+// Convert to .icns beside this script so builds are location-independent.
+let scriptURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+let projectRoot = scriptURL.deletingLastPathComponent()
+let outputPath = projectRoot.appendingPathComponent("AppIcon.icns").path
+
 let process = Process()
 process.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
-let outputPath = NSHomeDirectory() + "/ipinside-mock/AppIcon.icns"
 process.arguments = ["-c", "icns", iconsetPath, "-o", outputPath]
-try! process.run()
+try process.run()
 process.waitUntilExit()
+
+guard process.terminationStatus == 0 else {
+    fatalError("iconutil failed with status \(process.terminationStatus)")
+}
 print("Icon saved to: \(outputPath)")
