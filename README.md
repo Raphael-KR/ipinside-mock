@@ -25,13 +25,40 @@ Wladimir Palant(AdBlock Plus 개발자)의 [분석](https://palant.info/2023/01/
 
 이 앱은 IPinside의 기술(시스템 정보 수집, 암호화 등)을 구현하지 않습니다. 단순히 이전에 수집된 응답을 재전송할 뿐입니다.
 
+## 기능 확장 구조
+
+기존 메뉴바 앱을 공통 기반으로 사용하며, 추가 기능인
+[TouchEnxKey-mock](TouchEnxKey-mock/README.md)을 이 저장소 안에서 개발합니다.
+
+- 메뉴바 앱, 앱 생명주기, 빌드·번들·아이콘은 함께 사용합니다.
+- TouchEnxKey 전용 코드와 문서는 `TouchEnxKey-mock/`에 둡니다.
+- 공통으로 필요한 코드는 기존 구현을 재사용하고, 실제 공유가 필요할 때 `src/`에서
+  분리합니다.
+- 프로토콜, 인증서, 캡처 데이터, 설정은 기능별 요구사항을 확인하여 구분합니다.
+
+TouchEnxKey-mock은 티머니(`https://pay.tmoney.co.kr`)의 설치 확인용 로컬 WSS 응답과
+메뉴의 시작·중지 항목을 구현했습니다. 정적 검사와 앱 빌드를 통과했으며,
+사용자가 티머니에서 정상 동작을 확인했다고 보고했습니다. 에이전트가 직접 실행한
+통합 시험 결과와는 구분합니다. 키보드 보호·암호화 기능은 구현하지 않습니다.
+자세한 사용법과 검증 상태는 전용 폴더의 문서를 참고하세요.
+
 ## 설치
+
+### 릴리스 다운로드
+
+[v1.1.0 릴리스](https://github.com/Raphael-KR/ipinside-mock/releases/tag/v1.1.0)에서
+Apple Silicon용 `IPinsideMock-v1.1.0-macos-arm64.zip`과 `SHA256SUMS.txt`를 받습니다.
+ZIP을 풀어 `IPinsideMock.app`을 응용 프로그램 폴더에 복사합니다.
+
+배포 앱은 ad-hoc 서명으로 번들 무결성을 확인한 빌드입니다. Apple 개발자 ID 서명과
+공증은 없으므로 macOS 보안 정책에 따라 실행이 제한될 수 있습니다. 소스 빌드도
+지원합니다. Python 3 실행 환경과 공통 TLS 인증서는 별도로 필요합니다.
 
 ### 요구사항
 
 - macOS 12.0 이상
 - Swift 5.5 이상 (`xcode-select --install`)
-- Python 3 (macOS 기본 포함)
+- `/usr/bin/python3` 실행 환경 (Xcode Command Line Tools로 제공)
 
 ### 빌드
 
@@ -43,6 +70,14 @@ chmod +x build.sh
 ```
 
 `/Applications/IPinsideMock.app`에 설치됩니다.
+
+설치본을 변경하지 않고 별도 경로에 빌드하려면:
+
+```bash
+./build.sh --no-install --output-dir build/touchen-nxkey
+```
+
+SDK 경로를 직접 지정해야 하는 환경에서는 `--sdk /path/to/MacOSX.sdk`를 덧붙입니다.
 
 ### 초기 설정
 
@@ -66,6 +101,8 @@ chmod +x build.sh
 - **서버 시작** → 인터넷뱅킹 이용
 - **서버 중지** → 사용 완료 후
 - **데이터 재캡처** → IP 변경 등의 경우
+- **TouchEn nxKey · 티머니 → 설치 확인 시작/중지** → 추가 기능을 독립적으로 제어
+- **공통 인증서 설정…** → 두 기능이 함께 사용할 기존 로컬 TLS 인증서 설정
 
 ### 로그인 항목 등록 (선택)
 

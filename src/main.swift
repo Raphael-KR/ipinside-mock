@@ -40,6 +40,11 @@ let captureRequestValue: String = {
 
 class SetupManager {
 
+    var isTLSReady: Bool {
+        FileManager.default.fileExists(atPath: certPath) &&
+        FileManager.default.fileExists(atPath: keyPath) && isCertTrusted
+    }
+
     var isSetupComplete: Bool {
         FileManager.default.fileExists(atPath: certPath) &&
         FileManager.default.fileExists(atPath: keyPath) &&
@@ -150,7 +155,11 @@ class SetupManager {
         do {
             try process.run()
             process.waitUntilExit()
-            return process.terminationStatus == 0
+            if process.terminationStatus != 0 {
+                NSLog("Certificate trust registration failed; expected_status=0 actual_status=%d", process.terminationStatus)
+                return false
+            }
+            return true
         } catch {
             NSLog("Failed to trust cert: \(error)")
             return false
@@ -199,10 +208,12 @@ class TrustAllDelegate: NSObject, URLSessionDelegate {
 // MARK: - Mock Server
 
 class IPinsideMockServer {
-    private var serverProcess: Process?
+    private let process = PythonServerProcess()
 
-    var isRunning: Bool {
-        serverProcess?.isRunning ?? false
+    var isRunning: Bool { process.isRunning }
+    var onExit: (() -> Void)? {
+        get { process.onExit }
+        set { process.onExit = newValue }
     }
 
     func start() -> Bool {
@@ -213,32 +224,11 @@ class IPinsideMockServer {
             return false
         }
 
-        let scriptPath = NSTemporaryDirectory() + "ipinside_mock_server.py"
-        let script = createServerScript()
-        do {
-            try script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
-        } catch {
-            NSLog("Failed to write server script: \(error)")
-            return false
-        }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        process.arguments = [scriptPath]
-        process.environment = ProcessInfo.processInfo.environment
-        do {
-            try process.run()
-            serverProcess = process
-            return true
-        } catch {
-            NSLog("Failed to start server: \(error)")
-            return false
-        }
+        return process.start(script: createServerScript(), filename: "ipinside_mock_server.py")
     }
 
     func stop() {
-        serverProcess?.terminate()
-        serverProcess = nil
+        process.stop()
     }
 
     private func createServerScript() -> String {
@@ -489,17 +479,22 @@ class SetupWindowController: NSObject {
 
 // MARK: - Menu Bar App
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let server = IPinsideMockServer()
     private let setup = SetupManager()
+    private let nxKey = TouchEnNxKeyServer()
     private var toggleItem: NSMenuItem!
     private var statusMenuItem: NSMenuItem!
     private var setupController: SetupWindowController?
+    private var nxStatusItem: NSMenuItem!
+    private var nxToggleItem: NSMenuItem!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Create status bar item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        server.onExit = { [weak self] in self?.updateUI(running: false) }
+        nxKey.onExit = { [weak self] in self?.updateNxUI() }
         rebuildMenu()
         updateIcon(running: false)
 
@@ -511,10 +506,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         server.stop()
+        nxKey.stop()
     }
 
     private func rebuildMenu() {
         let menu = NSMenu()
+        menu.delegate = self
 
         statusMenuItem = NSMenuItem(title: "상태: 꺼짐", action: nil, keyEquivalent: "")
         statusMenuItem.isEnabled = false
@@ -540,11 +537,101 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        let nxTitle = NSMenuItem(title: "TouchEn nxKey · 티머니", action: nil, keyEquivalent: "")
+        menu.addItem(nxTitle)
+        nxStatusItem = NSMenuItem(title: "설치 확인: 꺼짐", action: nil, keyEquivalent: "")
+        menu.addItem(nxStatusItem)
+        nxToggleItem = NSMenuItem(title: "설치 확인 시작", action: #selector(toggleNxKey), keyEquivalent: "")
+        nxToggleItem.target = self
+        menu.addItem(nxToggleItem)
+        let tlsItem = NSMenuItem(title: "공통 인증서 설정…", action: #selector(configureCommonTLS), keyEquivalent: "")
+        tlsItem.target = self
+        menu.addItem(tlsItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         let quitItem = NSMenuItem(title: "종료", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
         statusItem.menu = menu
+        updateNxUI()
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        updateUI(running: server.isRunning)
+        updateNxUI()
+    }
+
+    @objc private func toggleNxKey() {
+        if nxKey.isRunning {
+            nxKey.stop()
+            updateNxUI()
+            return
+        }
+        guard setup.isTLSReady else {
+            configureCommonTLS()
+            return
+        }
+        guard nxKey.start() else {
+            showNxError(nxKey.failureDescription)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+            self.updateNxUI()
+            if !self.nxKey.isRunning { self.showNxError(self.nxKey.failureDescription) }
+        }
+    }
+
+    private func updateNxUI() {
+        nxStatusItem?.title = nxKey.isRunning ? "설치 확인: 켜짐 (포트 \(TouchEnNxKeyServer.port))" : "설치 확인: 꺼짐"
+        nxToggleItem?.title = nxKey.isRunning ? "설치 확인 중지" : "설치 확인 시작"
+        updateIcon(running: server.isRunning)
+    }
+
+    private func showNxError(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "TouchEn nxKey 설치 확인 시작 실패"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.runModal()
+    }
+
+    @objc private func configureCommonTLS() {
+        let filesExist = [certPath, keyPath].allSatisfy { FileManager.default.fileExists(atPath: $0) }
+        let alert = NSAlert()
+        if setup.isTLSReady {
+            alert.messageText = "공통 인증서가 준비되어 있습니다."
+            alert.informativeText = "IPinside와 TouchEn nxKey가 같은 로컬 TLS 인증서를 사용합니다. TouchEn nxKey의 ‘설치 확인 시작’을 선택하세요."
+            alert.runModal()
+            return
+        }
+        guard filesExist || setup.isIPinsideInstalled else {
+            alert.messageText = "공통 인증서가 필요합니다."
+            alert.informativeText = "기존 IPinside 설정의 인증서와 개인 키를 함께 사용합니다. IPinside를 설치한 뒤 ‘공통 인증서 설정…’을 실행하세요. TouchEn nxKey에는 IPinside 응답 캡처가 필요하지 않습니다."
+            alert.runModal()
+            return
+        }
+        alert.messageText = "공통 로컬 인증서를 설정하시겠습니까?"
+        alert.informativeText = "필요한 인증서를 IPinside에서 복사하고 로그인 키체인에 신뢰 등록합니다. 관리자 인증이나 키체인 허용 창이 나타날 수 있습니다."
+        alert.addButton(withTitle: "설정")
+        alert.addButton(withTitle: "취소")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let copied = filesExist || self.setup.copyCerts()
+            let trusted = copied && self.setup.trustCert()
+            DispatchQueue.main.async {
+                if trusted {
+                    self.rebuildMenu()
+                    self.updateUI(running: self.server.isRunning)
+                } else {
+                    NSLog("Common TLS setup failed; expected_copied=1 actual_copied=%d expected_trusted=1 actual_trusted=%d", copied ? 1 : 0, trusted ? 1 : 0)
+                    self.showNxError(copied ? "공통 인증서 신뢰 등록에 실패했습니다." : "공통 인증서 복사에 실패했습니다.")
+                }
+            }
+        }
     }
 
     @objc private func showSetup() {
@@ -602,23 +689,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateIcon(running: Bool) {
         if let button = statusItem.button {
             let title = "IP"
-            let color: NSColor = !setup.isSetupComplete ? .systemOrange :
-                                  running ? .systemGreen : .systemGray
+            let color: NSColor = (running || nxKey.isRunning) ? .systemGreen :
+                                  !setup.isSetupComplete ? .systemOrange : .systemGray
             let attrs: [NSAttributedString.Key: Any] = [
                 .foregroundColor: color,
                 .font: NSFont.systemFont(ofSize: 12, weight: .bold)
             ]
             button.attributedTitle = NSAttributedString(string: title, attributes: attrs)
+            button.toolTip = "IPinside: \(running ? "켜짐" : "꺼짐") / TouchEn nxKey: \(nxKey.isRunning ? "켜짐" : "꺼짐")"
         }
     }
 
     @objc private func quitApp() {
         server.stop()
+        nxKey.stop()
         NSApp.terminate(nil)
     }
 
     func cleanupAndExit() {
         server.stop()
+        nxKey.stop()
         exit(0)
     }
 }
